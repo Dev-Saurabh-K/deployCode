@@ -1,0 +1,9 @@
+created -- two sample react vite app , app1 , app2
+  todo---
+  run both app2 on different port 
+  test on server link
+  docker file 
+  inculde build files in dockerfile
+  nginx conf
+  automate nginx using python
+  automate frontend dockerfile y=using python
