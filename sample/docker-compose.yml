@@ -1,0 +1,15 @@
+
+services:
+  app1:
+    build: ./sample1
+    container_name: app1
+    ports:
+      - "10001:80"   # host:container
+    restart: always
+
+  app2:
+    build: ./sample2
+    container_name: app2
+    ports:
+      - "10002:80"
+    restart: always
