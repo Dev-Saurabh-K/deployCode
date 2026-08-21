@@ -20,4 +20,4 @@ jobs:
             cd /home/saurabh/deployCode
             git pull origin main
             cd sample
-            docker compose up -d
+            docker compose up
