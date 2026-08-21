@@ -19,5 +19,5 @@ jobs:
           script: |
             cd /home/saurabh/deployCode
             git pull origin main
-            ls
-            # docker compose up -d --build
+            cd sample
+            docker compose up -d --build
