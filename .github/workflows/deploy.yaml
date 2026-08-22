@@ -22,4 +22,4 @@ jobs:
             git pull origin main
             cd sample
             docker-compose down
-            docker-compose up -d
+            docker-compose up --build -d
