@@ -20,7 +20,7 @@ jobs:
 
             cd /home/saurabh/deployCode 
             #temporarily for avoiding merge conflict
-            git stash
+            # git stash
             git pull origin main
             cd sample
             docker-compose down
