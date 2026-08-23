@@ -18,7 +18,9 @@ jobs:
           password: ${{ secrets.SSH_PASSWORD }}
           script: |
 
-            cd /home/saurabh/deployCode
+            cd /home/saurabh/deployCode 
+            #temporarily for avoiding merge conflict
+            git stash
             git pull origin main
             cd sample
             docker-compose down
