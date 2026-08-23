@@ -16,9 +16,5 @@ mkdir -p "$DEPLOY_DIR"
 #copy dockerfile
 cp "$UNIVERSAL_DOCKERFILE" "$DEPLOY_DIR/Dockerfile"
 
-echo "Deployment dir created."
-echo "$DEPLOY_DIR"
-
-echo "Dockerfile created."
 
 #input--> IMAGE_NAME (foldername)
