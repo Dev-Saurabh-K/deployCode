@@ -2,7 +2,7 @@
 
 IMAGE_NAME="$1"
 
-if[-z "$IMAGE_NAME"]; then
+if[ -z "$IMAGE_NAME" ]; then
     echo "Usage: $0 <image_name>"
     exit 1
 fi
@@ -20,3 +20,5 @@ echo "Deployment dir created."
 echo "$DEPLOY_DIR"
 
 echo "Dockerfile created."
+
+#input--> IMAGE_NAME (foldername)
