@@ -8,7 +8,7 @@ if [ -z "$IMAGE_NAME" ]; then
 fi
 
 DEPLOY_DIR="/opt/deployCode/$IMAGE_NAME"
-UNIVERSAL_DOCKERFILE="deployCode/templates/Dockerfile"
+UNIVERSAL_DOCKERFILE="/home/saurabh/deployCode/templates/Dockerfile"
 
 #create deployment folder
 mkdir -p "$DEPLOY_DIR"
