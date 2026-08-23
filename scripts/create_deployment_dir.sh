@@ -2,7 +2,7 @@
 
 IMAGE_NAME="$1"
 
-if[ -z "$IMAGE_NAME" ]; then
+if [ -z "$IMAGE_NAME" ]; then
     echo "Usage: $0 <image_name>"
     exit 1
 fi
@@ -14,7 +14,7 @@ UNIVERSAL_DOCKERFILE="deployCode/templates/Dockerfile"
 mkdir -p "$DEPLOY_DIR"
 
 #copy dockerfile
-cp "$UNIVERSAL_DOCKERFILE" "$DEPLOY_DIR/Dockerfile
+cp "$UNIVERSAL_DOCKERFILE" "$DEPLOY_DIR/Dockerfile"
 
 echo "Deployment dir created."
 echo "$DEPLOY_DIR"
