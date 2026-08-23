@@ -18,3 +18,4 @@ cp "$UNIVERSAL_DOCKERFILE" "$DEPLOY_DIR/Dockerfile"
 
 
 #input--> IMAGE_NAME (foldername)
+#first file
