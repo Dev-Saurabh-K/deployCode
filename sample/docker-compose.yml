@@ -20,3 +20,5 @@ services:
     ports:
       - "10003:80"
     restart: always
+
+#variables-- APP_NAME , IMAGE_NAME -> FOLDERNAME WHERE DOCKER FILE IS PRESENT, 

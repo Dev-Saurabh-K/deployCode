@@ -1,5 +1,10 @@
 #!/bin/bash
 
-INPUT=$1
+# APP_NAME=$1
+# IMAGE_NAME=$2
+# PORT=$3
 
-echo "input: $INPUT"
+# echo "Deployeing $APP_NAME"
+
+# # Bbuild image
+# docker build -t "
