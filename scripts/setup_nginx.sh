@@ -51,3 +51,5 @@ echo "Nginx reloaded successfully."
 echo "Application: $IMAGE_NAME"
 echo "Port: $PORT"
 echo "Domain: ${IMAGE_NAME}.dev-saurabh-k.xyz"
+
+# file no 4 use sudo for this

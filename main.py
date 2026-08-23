@@ -22,3 +22,5 @@ def run_command():
         "error": result.stderr,
         "return_code": result.returncode
     }
+# @app.get("/deploy/vite/react")
+# def deploy_vite_react():
