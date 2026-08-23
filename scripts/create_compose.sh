@@ -8,7 +8,7 @@ if [ -z "$IMAGE_NAME" ] || [ -z "$PORT" ]; then
     exit 1
 fi
 
-DEPLOY_DIR="/opt/deploycode/$IMAGE_NAME"
+DEPLOY_DIR="/opt/deployCode/$IMAGE_NAME"
 COMPOSE_FILE="$DEPLOY_DIR/docker-compose.yml"
 
 if [ ! -f "$DEPLOY_DIR/Dockerfile" ]; then
