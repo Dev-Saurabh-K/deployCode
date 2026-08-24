@@ -29,3 +29,6 @@ EOF
 
 echo "Nginx configuration created:"
 echo "$CONFIG_FILE"
+
+
+#  sample file 
