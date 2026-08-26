@@ -12,7 +12,7 @@ app = FastAPI(title="cploy", description="Self-hosted deployment platform")
 
 # CORS — allowed origins
 origins = [
-    "http://localhost:5175",
+    "http://localhost:5173",
     "https://dev-saurabh-k.xyz",
     "https://www.dev-saurabh-k.xyz",
     "https://cploy.dev-saurabh-k.xyz",
