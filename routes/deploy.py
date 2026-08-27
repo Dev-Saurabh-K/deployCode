@@ -14,7 +14,6 @@ router = APIRouter(prefix="/deploy", tags=["deploy"])
 # ── Request / Response Schemas ───────────────────────────────────────────────
 class DeployRequest(BaseModel):
     image_name: str
-    port: str
     repo_url: str
 
 
@@ -37,6 +36,25 @@ class DeployStatusResponse(BaseModel):
         from_attributes = True
 
 MAX_DEPLOYMENTS_PER_USER = 2
+PORT_RANGE_START = 10000
+PORT_RANGE_END = 40000
+
+
+def _next_available_port(db: Session) -> str:
+    """Find the next unused port in the range 10000–40000."""
+    used_ports = {
+        int(row[0])
+        for row in db.query(Deployment.port)
+        .filter(Deployment.status.notin_(["deleted", "failed"]))
+        .all()
+    }
+    for port in range(PORT_RANGE_START, PORT_RANGE_END + 1):
+        if port not in used_ports:
+            return str(port)
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="No available ports. Please try again later.",
+    )
 
 
 # ── Routes ───────────────────────────────────────────────────────────────────
@@ -81,10 +99,13 @@ def deploy_vite_react(
             detail=f"Deployment limit reached. Maximum {MAX_DEPLOYMENTS_PER_USER} active deployments per user.",
         )
 
+    # Auto-assign a unique port
+    assigned_port = _next_available_port(db)
+
     deployment = Deployment(
         user_id=current_user.id,
         image_name=body.image_name,
-        port=body.port,
+        port=assigned_port,
         repo_url=body.repo_url,
         status="pending",
     )
@@ -97,7 +118,7 @@ def deploy_vite_react(
         run_deployment,
         cast(int, deployment.id),
         body.image_name,
-        body.port,
+        assigned_port,
         body.repo_url,
     )
 
