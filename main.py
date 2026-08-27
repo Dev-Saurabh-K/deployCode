@@ -16,6 +16,8 @@ origins = [
     "https://dev-saurabh-k.xyz",
     "https://www.dev-saurabh-k.xyz",
     "https://cploy.dev-saurabh-k.xyz",
+    "https://deploycode-chi.vercel.app",
+    "https://deploycode-git-main-saurabh-kumars-projects-ee8f1350.vercel.app",
 ]
 
 app.add_middleware(
