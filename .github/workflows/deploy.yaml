@@ -22,6 +22,6 @@ jobs:
             #temporarily for avoiding merge conflict
             git stash
             git pull origin main
-            cd sample
-            docker-compose down
-            docker-compose up --build -d
+            # cd sample
+            # docker-compose down
+            # docker-compose up --build -d
