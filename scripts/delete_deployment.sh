@@ -12,10 +12,10 @@ DEPLOY_DIR="/opt/deployCode/$APP_NAME"
 echo "Removing deployment: $APP_NAME"
 
 # Remove Nginx symlink
-sudo rm -f "/etc/nginx/sites-enabled/$APP_NAME"
+sudo rm -f "/etc/nginx/sites-enabled/$APP_NAME.conf"
 
 # Remove Nginx config
-sudo rm -f "/etc/nginx/sites-available/$APP_NAME"
+sudo rm -f "/etc/nginx/sites-available/$APP_NAME.conf"
 
 # Test and reload Nginx
 if sudo nginx -t; then
