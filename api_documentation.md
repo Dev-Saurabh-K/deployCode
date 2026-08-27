@@ -259,7 +259,7 @@ The deployment pipeline runs these steps sequentially:
 1. Create deployment directory on the server
 2. Generate `docker-compose.yml`
 3. Clone the GitHub repository
-4. Run `docker-compose up -d --build`
+4. Run `docker compose up -d --build`
 5. Configure nginx reverse proxy
 
 If any step fails, the deployment is marked `failed` with the error details.
@@ -644,7 +644,7 @@ The `delete_deployment.sh` script runs these cleanup steps:
 1. Remove nginx symlink from `sites-enabled`
 2. Remove nginx config from `sites-available`
 3. Test and reload nginx
-4. Run `docker-compose down --rmi all --remove-orphans` (stops containers, removes images)
+4. Run `docker compose down --rmi all --remove-orphans` (stops containers, removes images)
 5. Delete the entire deployment directory (`/opt/deployCode/<image_name>`)
 
 #### Success Response — `200 OK`

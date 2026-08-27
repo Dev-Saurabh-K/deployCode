@@ -29,7 +29,7 @@ fi
 if [ -f "$DEPLOY_DIR/docker-compose.yml" ]; then
     cd "$DEPLOY_DIR" || exit 1
 
-    docker-compose down --rmi all --remove-orphans
+    docker compose down --rmi all --remove-orphans
 else
     echo "docker-compose.yml not found in $DEPLOY_DIR"
 fi

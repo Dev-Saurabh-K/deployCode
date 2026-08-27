@@ -69,7 +69,7 @@ def run_deployment(deployment_id: int, image_name: str, port: str, repo_url: str
 
         # Step 4: Docker compose up
         result = subprocess.run(
-            ["docker-compose", "up", "-d", "--build"],
+            ["docker", "compose", "up", "-d", "--build"],
             cwd=f"/opt/deployCode/{image_name}",
             capture_output=True,
             text=True,
