@@ -6,7 +6,7 @@ from typing import cast
 from auth import get_current_user
 from database import get_db
 from models import Deployment, User
-from services.deploy_service import run_deployment
+from services.deploy_service import run_deployment, run_delete_deployment
 
 router = APIRouter(prefix="/deploy", tags=["deploy"])
 
@@ -36,8 +36,25 @@ class DeployStatusResponse(BaseModel):
     class Config:
         from_attributes = True
 
+MAX_DEPLOYMENTS_PER_USER = 2
+
 
 # ── Routes ───────────────────────────────────────────────────────────────────
+@router.get("/my-projects", response_model=list[DeployStatusResponse])
+def list_my_deployments(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List all deployments belonging to the authenticated user."""
+    deployments = (
+        db.query(Deployment)
+        .filter(Deployment.user_id == current_user.id)
+        .order_by(Deployment.created_at.desc())
+        .all()
+    )
+    return deployments
+
+
 @router.post("/vite/react", response_model=DeployResponse, status_code=status.HTTP_202_ACCEPTED)
 def deploy_vite_react(
     body: DeployRequest,
@@ -49,6 +66,21 @@ def deploy_vite_react(
     Start a Vite+React deployment in the background.
     Returns immediately with a deployment ID that can be polled for status.
     """
+    # Enforce per-user deployment limit
+    active_count = (
+        db.query(Deployment)
+        .filter(
+            Deployment.user_id == current_user.id,
+            Deployment.status.notin_(["deleted", "failed"]),
+        )
+        .count()
+    )
+    if active_count >= MAX_DEPLOYMENTS_PER_USER:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Deployment limit reached. Maximum {MAX_DEPLOYMENTS_PER_USER} active deployments per user.",
+        )
+
     deployment = Deployment(
         user_id=current_user.id,
         image_name=body.image_name,
@@ -94,3 +126,47 @@ def get_deployment_status(
             detail="Deployment not found",
         )
     return deployment
+
+
+@router.delete("/{deployment_id}", response_model=DeployResponse)
+def delete_deployment(
+    deployment_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Delete a deployment — tears down Docker container, nginx config, and files."""
+    deployment = (
+        db.query(Deployment)
+        .filter(Deployment.id == deployment_id, Deployment.user_id == current_user.id)
+        .first()
+    )
+    if not deployment:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Deployment not found",
+        )
+
+    if deployment.status == "deleting":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Deployment is already being deleted",
+        )
+
+    if deployment.status == "deleted":
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="Deployment has already been deleted",
+        )
+
+    background_tasks.add_task(
+        run_delete_deployment,
+        deployment_id,
+        deployment.image_name,
+    )
+
+    return {
+        "deployment_id": deployment_id,
+        "status": "deleting",
+        "message": "Deletion started. Poll /deploy/{id}/status for updates.",
+    }

@@ -111,3 +111,44 @@ def _fail(db: Session, deployment: Deployment, error_msg: str):
     deployment.error_message = error_msg
     deployment.updated_at = datetime.now(timezone.utc)
     db.commit()
+
+
+def run_delete_deployment(deployment_id: int, image_name: str):
+    """
+    Execute the delete_deployment.sh script in a background task.
+    Uses its own DB session since BackgroundTasks run outside the request lifecycle.
+    """
+    db: Session = SessionLocal()
+    try:
+        deployment = db.query(Deployment).filter(Deployment.id == deployment_id).first()
+        if not deployment:
+            return
+
+        deployment.status = "deleting"
+        deployment.updated_at = datetime.now(timezone.utc)
+        db.commit()
+
+        result = subprocess.run(
+            [
+                "sudo",
+                "/bin/bash",
+                "/home/saurabh/deployCode/scripts/delete_deployment.sh",
+                image_name,
+            ],
+            capture_output=True,
+            text=True,
+        )
+
+        if result.returncode != 0:
+            _fail(db, deployment, f"delete: {result.stderr}")
+            return
+
+        deployment.status = "deleted"
+        deployment.domain = None
+        deployment.updated_at = datetime.now(timezone.utc)
+        db.commit()
+
+    except Exception as exc:
+        _fail(db, deployment, f"delete_error: {str(exc)}")
+    finally:
+        db.close()
