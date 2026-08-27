@@ -1,6 +1,7 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from typing import cast
 
 from auth import get_current_user
 from database import get_db
@@ -62,7 +63,7 @@ def deploy_vite_react(
     # Fire-and-forget background task
     background_tasks.add_task(
         run_deployment,
-        deployment.id,
+        cast(int, deployment.id),
         body.image_name,
         body.port,
         body.repo_url,
