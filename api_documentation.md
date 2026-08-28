@@ -449,6 +449,7 @@ the running container. They are not returned by deployment status endpoints.
 
 | Status | Condition | Response Body |
 |--------|-----------|---------------|
+| `400 Bad Request` | Repository is private or not found | `{"detail": "Repository is private or does not exist. You must provide a public GitHub repository link."}` |
 | `401 Unauthorized` | Missing or invalid token | `{"detail": "Invalid or expired token"}` |
 | `401 Unauthorized` | No `Authorization` header | `{"detail": "Not authenticated"}` |
 | `403 Forbidden` | User already has 2 active deployments | `{"detail": "Deployment limit reached. Maximum 2 active deployments per user."}` |

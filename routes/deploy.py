@@ -1,5 +1,7 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+import os
 import re
+import subprocess
 
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func
@@ -84,6 +86,22 @@ def _next_available_port(db: Session) -> str:
     )
 
 
+def _is_public_repo(repo_url: str) -> bool:
+    """Check whether a repository URL is publicly accessible without credentials."""
+    try:
+        env = os.environ.copy()
+        env["GIT_TERMINAL_PROMPT"] = "0"
+        result = subprocess.run(
+            ["git", "ls-remote", "-h", repo_url],
+            env=env,
+            capture_output=True,
+            timeout=8,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
 # ── Routes ───────────────────────────────────────────────────────────────────
 @router.get("/my-projects", response_model=list[DeployStatusResponse])
 def list_my_deployments(
@@ -124,6 +142,13 @@ def deploy_vite_react(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Deployment limit reached. Maximum {MAX_DEPLOYMENTS_PER_USER} active deployments per user.",
+        )
+
+    # Validate that the Git repository is public and accessible
+    if not _is_public_repo(body.repo_url):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Repository is private or does not exist. You must provide a public GitHub repository link.",
         )
 
     # App names become Docker container names and subdomains, so they must be
