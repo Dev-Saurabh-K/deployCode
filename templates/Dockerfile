@@ -1,12 +1,15 @@
-FROM node:26 AS builder
+FROM node:22-bookworm-slim AS builder
 
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm install
+
+# Try strict lockfile install first; fall back gracefully to legacy peer deps if conflicts exist
+RUN npm ci || npm install --legacy-peer-deps
 
 COPY . .
 RUN npm run build
+RUN if [ -d "/app/build" ] && [ ! -d "/app/dist" ]; then mv /app/build /app/dist; fi
 
 FROM nginx:alpine
 

@@ -29,7 +29,22 @@ def run_deployment(
         deployment.updated_at = datetime.now(timezone.utc)
         db.commit()
 
-        # Step 1: Create deployment directory
+        # Step 1: Clone git repository and verify package.json
+        result = subprocess.run(
+            [
+                "/bin/bash",
+                "/home/saurabh/deployCode/scripts/clone_git_repo.sh",
+                image_name,
+                repo_url,
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            _fail(db, deployment, f"git_setup: {result.stderr or result.stdout}")
+            return
+
+        # Step 2: Copy universal Dockerfile & Nginx build assets
         result = subprocess.run(
             [
                 "/bin/bash",
@@ -40,10 +55,10 @@ def run_deployment(
             text=True,
         )
         if result.returncode != 0:
-            _fail(db, deployment, f"create_deployment: {result.stderr}")
+            _fail(db, deployment, f"create_deployment: {result.stderr or result.stdout}")
             return
 
-        # Step 2: Create docker-compose file
+        # Step 3: Create docker-compose file and .env
         result = subprocess.run(
             [
                 "/bin/bash",
@@ -56,22 +71,7 @@ def run_deployment(
             text=True,
         )
         if result.returncode != 0:
-            _fail(db, deployment, f"create_compose: {result.stderr}")
-            return
-
-        # Step 3: Clone git repository
-        result = subprocess.run(
-            [
-                "/bin/bash",
-                "/home/saurabh/deployCode/scripts/clone_git_repo.sh",
-                image_name,
-                repo_url,
-            ],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0:
-            _fail(db, deployment, f"git_setup: {result.stderr}")
+            _fail(db, deployment, f"create_compose: {result.stderr or result.stdout}")
             return
 
         # Step 4: Docker compose up
@@ -82,7 +82,7 @@ def run_deployment(
             text=True,
         )
         if result.returncode != 0:
-            _fail(db, deployment, f"docker_compose: {result.stderr}")
+            _fail(db, deployment, f"docker_compose: {result.stderr or result.stdout}")
             return
 
         # Step 5: Setup nginx
@@ -97,7 +97,7 @@ def run_deployment(
             text=True,
         )
         if result.returncode != 0:
-            _fail(db, deployment, f"nginx: {result.stderr}")
+            _fail(db, deployment, f"nginx: {result.stderr or result.stdout}")
             return
 
         # All steps passed — mark success
@@ -147,7 +147,7 @@ def run_delete_deployment(deployment_id: int, image_name: str):
         )
 
         if result.returncode != 0:
-            _fail(db, deployment, f"delete: {result.stderr}")
+            _fail(db, deployment, f"delete: {result.stderr or result.stdout}")
             return
 
         deployment.status = "deleted"

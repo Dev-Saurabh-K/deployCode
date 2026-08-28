@@ -1,6 +1,6 @@
 # cploy API Documentation
 
-> **Base URL**: `http://<server-ip>:8000`
+> **Base URL**: `http://<server-ip>:8000`  
 > **Interactive Docs**: `GET /docs` (Swagger UI) · `GET /redoc` (ReDoc)
 
 ---
@@ -15,6 +15,9 @@
   - [POST /auth/login](#post-authlogin)
 - [Deploy](#deploy)
   - [How Deploy Works](#how-deploy-works)
+  - [Automatic Port Assignment](#automatic-port-assignment)
+  - [Monorepo & Subfolder Support](#monorepo--subfolder-support)
+  - [Environment Variables](#environment-variables)
   - [Deployment Limit](#deployment-limit)
   - [GET /deploy/my-projects](#get-deploymy-projects)
   - [POST /deploy/vite/react](#post-deployvitereact)
@@ -26,6 +29,7 @@
 - [Deployment Status Lifecycle](#deployment-status-lifecycle)
 - [Error Reference](#error-reference)
 - [Frontend Integration Guide](#frontend-integration-guide)
+- [Quick Reference](#quick-reference--all-endpoints)
 
 ---
 
@@ -33,14 +37,14 @@
 
 cploy is a self-hosted deployment platform. The API lets you:
 
-1. **Register** an account and **log in** to receive a JWT
-2. **Deploy** a Vite + React app from a GitHub repo (runs asynchronously in the background)
-3. **Poll** the deployment status until it completes
-4. **List** all your deployed projects
-5. **Delete** a deployment (tears down Docker container, nginx config, and files)
+1. **Register** an account and **log in** to receive a JWT access token
+2. **Deploy** a Vite / React app from any public Git repository with optional environment variables (runs asynchronously in the background)
+3. **Poll** deployment status in real-time until the build and configuration complete
+4. **List** all projects deployed by your account
+5. **Delete** deployments cleanly (stops containers, cleans Docker images, removes Nginx virtual hosts, and purges files)
 
 > [!IMPORTANT]
-> Each user is limited to **2 active deployments** at a time. Deleting a deployment or having a failed one frees up a slot.
+> Each user is limited to **2 active deployments** at a time. Deleting a deployment or having a failed one automatically frees up a slot.
 
 All deploy endpoints are **protected** — they require a valid JWT in the `Authorization` header.
 
@@ -60,16 +64,16 @@ sequenceDiagram
     API-->>FE: [ ...deployments ]
 
     FE->>API: POST /deploy/vite/react (with Bearer token)
-    API->>BG: Start deployment task
+    API->>BG: Start async deployment pipeline
     API-->>FE: { deployment_id, status: "pending" }
 
-    loop Poll every 3-5 seconds
+    loop Poll every 3 seconds
         FE->>API: GET /deploy/{id}/status (with Bearer token)
         API-->>FE: { status: "running" | "success" | "failed" }
     end
 
     FE->>API: DELETE /deploy/{id} (with Bearer token)
-    API->>BG: Start delete task
+    API->>BG: Run cleanup script
     API-->>FE: { deployment_id, status: "deleting" }
 ```
 
@@ -77,16 +81,16 @@ sequenceDiagram
 
 ## CORS Configuration
 
-The API allows requests from these origins:
+The API allows cross-origin requests from:
 
 | Origin | Purpose |
 |--------|---------|
-| `http://localhost:5173` | Vite dev server |
-| `https://dev-saurabh-k.xyz` | Production domain |
-| `https://www.dev-saurabh-k.xyz` | www subdomain |
-| `https://cploy.dev-saurabh-k.xyz` | cploy subdomain |
+| `http://localhost:5173` | Vite dev server default |
+| `https://dev-saurabh-k.xyz` | Production apex domain |
+| `https://www.dev-saurabh-k.xyz` | Production www domain |
+| `https://cploy.dev-saurabh-k.xyz` | cploy dashboard subdomain |
 
-All methods, headers, and credentials are allowed. Requests from other origins will be blocked by the browser.
+All HTTP methods (`GET`, `POST`, `DELETE`, `OPTIONS`), custom headers, and credentials are supported.
 
 ---
 
@@ -100,9 +104,6 @@ All methods, headers, and credentials are allowed. Requests from other origins w
 | **Token Lifetime** | 60 minutes |
 | **Algorithm** | HS256 |
 | **Header Format** | `Authorization: Bearer <token>` |
-
-> [!IMPORTANT]
-> Store the `access_token` securely on the client (e.g. in memory or `httpOnly` cookie). Include it in the `Authorization` header for all protected endpoints.
 
 ---
 
@@ -126,22 +127,17 @@ Create a new user account.
 
 ```json
 {
-  "username": "john",
-  "password": "securePassword123"
+  "username": "saurabh",
+  "password": "mySecurePassword123"
 }
 ```
 
 #### Success Response — `201 Created`
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | `integer` | The newly created user's ID |
-| `username` | `string` | The registered username |
-
 ```json
 {
   "id": 1,
-  "username": "john"
+  "username": "saurabh"
 }
 ```
 
@@ -150,34 +146,13 @@ Create a new user account.
 | Status | Condition | Response Body |
 |--------|-----------|---------------|
 | `400 Bad Request` | Username already taken | `{"detail": "Username already taken"}` |
-| `422 Unprocessable Entity` | Missing/invalid fields | Validation error details |
-
-#### Frontend Example
-
-```javascript
-const response = await fetch("/auth/register", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({
-    username: "john",
-    password: "securePassword123",
-  }),
-});
-
-if (response.status === 201) {
-  const user = await response.json();
-  console.log("Registered:", user.username);
-} else if (response.status === 400) {
-  const error = await response.json();
-  alert(error.detail); // "Username already taken"
-}
-```
+| `422 Unprocessable Entity` | Validation error (missing field) | Detailed field errors |
 
 ---
 
 ### POST /auth/login
 
-Authenticate with username and password. Returns a JWT access token.
+Authenticate with credentials and obtain a JWT access token.
 
 | Property | Value |
 |----------|-------|
@@ -186,30 +161,20 @@ Authenticate with username and password. Returns a JWT access token.
 | **Auth Required** | ❌ No |
 | **Content-Type** | `application/x-www-form-urlencoded` |
 
-> [!WARNING]
-> This endpoint uses **form data** (`application/x-www-form-urlencoded`), **not** JSON. This follows the OAuth2 password flow standard.
+> [!NOTE]
+> This endpoint uses **form data** (`application/x-www-form-urlencoded`), conforming to OAuth2 specifications and enabling the Swagger UI `/docs` Authorize button to work directly.
 
-#### Request Body (Form Fields)
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `username` | `string` | ✅ | Registered username |
-| `password` | `string` | ✅ | User's password |
+#### Request Body (Form URL-Encoded)
 
 ```
-username=john&password=securePassword123
+username=saurabh&password=mySecurePassword123
 ```
 
 #### Success Response — `200 OK`
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `access_token` | `string` | JWT token to use in `Authorization` header |
-| `token_type` | `string` | Always `"bearer"` |
-
 ```json
 {
-  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJqb2huIiwiZXhwIjoxNjk...",
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
   "token_type": "bearer"
 }
 ```
@@ -218,30 +183,7 @@ username=john&password=securePassword123
 
 | Status | Condition | Response Body |
 |--------|-----------|---------------|
-| `401 Unauthorized` | Wrong username or password | `{"detail": "Invalid username or password"}` |
-| `422 Unprocessable Entity` | Missing fields | Validation error details |
-
-#### Frontend Example
-
-```javascript
-const response = await fetch("/auth/login", {
-  method: "POST",
-  headers: { "Content-Type": "application/x-www-form-urlencoded" },
-  body: new URLSearchParams({
-    username: "john",
-    password: "securePassword123",
-  }),
-});
-
-if (response.ok) {
-  const data = await response.json();
-  // Store token for subsequent requests
-  localStorage.setItem("token", data.access_token);
-} else {
-  const error = await response.json();
-  alert(error.detail); // "Invalid username or password"
-}
-```
+| `401 Unauthorized` | Invalid username or password | `{"detail": "Invalid username or password"}` |
 
 ---
 
@@ -249,54 +191,45 @@ if (response.ok) {
 
 ### How Deploy Works
 
-Deployments are **asynchronous**. When you start a deploy:
+Deployments run **asynchronously** via background worker tasks:
 
-1. The API creates a deployment record and returns immediately with `202 Accepted`
-2. The actual build + deploy runs in a background task on the server
-3. The frontend **polls** the status endpoint to track progress
-
-The deployment pipeline runs these steps sequentially:
-1. Create deployment directory on the server
-2. Generate `docker-compose.yml`
-3. Write supplied environment variables to the deployment's `.env` file
-4. Clone the GitHub repository
-5. Run `docker compose up -d --build` (which loads `.env`)
-6. Configure nginx reverse proxy
-
-If any step fails, the deployment is marked `failed` with the error details.
-
-> [!TIP]
-> Multiple deployments can run concurrently. Each runs in its own background task, so users don't have to wait for each other.
+1. `POST /deploy/vite/react` performs immediate validation, assigns a dedicated port, creates a DB entry, and responds with `202 Accepted` in `< 100ms`.
+2. A background worker executes the multi-stage deployment pipeline:
+   - **Step 1 (`git_setup`):** Clones the repository dynamically (auto-detects default branch `main`, `master`, etc.) and verifies `package.json`.
+   - **Step 2 (`create_deployment`):** Injects the universal multi-stage Dockerfile and Nginx SPA routing assets.
+   - **Step 3 (`create_compose`):** Generates `docker-compose.yml` and writes provided environment variables to `.env`.
+   - **Step 4 (`docker_compose`):** Runs `docker compose up -d --build` with isolated networking.
+   - **Step 5 (`nginx`):** Configures host Nginx reverse proxy with live reloading for `<image_name>.dev-saurabh-k.xyz`.
+3. If any step fails, status transitions to `failed` and detailed error logs are attached.
 
 ### Automatic Port Assignment
 
-Ports are **automatically assigned** by the server — you don't need to provide one. The server picks the next available port from the range **10000–40000** by checking the database for ports already in use by active deployments. Ports from `deleted` or `failed` deployments are recycled.
+- Ports are **automatically allocated** by the system in the range **`10000` to `40000`**.
+- Clients do not specify port numbers in requests.
+- When a deployment is deleted or fails, its port is instantly freed and recycled for future deployments.
 
-The assigned port is visible in the response when you poll `GET /deploy/{id}/status` or `GET /deploy/my-projects`.
+### Monorepo & Subfolder Support
+
+- If `package.json` is not at the repository root, the deploy worker automatically searches immediate subdirectories (e.g. `client/`, `frontend/`, `web/`, `app/`, `ui/`).
+- Found subfolder contents are promoted to the deployment root before building.
+
+### Environment Variables
+
+- You can supply custom environment variables via the `environment_variables` dictionary.
+- Key names must follow standard format `[A-Za-z_][A-Za-z0-9_]*`.
+- Values cannot contain newlines or null bytes.
+- Maximum 100 environment variables per deployment.
 
 ### Deployment Limit
 
 > [!IMPORTANT]
-> Each user can have a maximum of **2 active deployments** at any time. Active means any deployment that is not in `deleted` or `failed` status (i.e. `pending`, `running`, `success`, or `deleting` all count).
-
-If the limit is reached, `POST /deploy/vite/react` returns:
-
-```json
-// 403 Forbidden
-{
-  "detail": "Deployment limit reached. Maximum 2 active deployments per user."
-}
-```
-
-**How to free up a slot:**
-- Delete an existing deployment via `DELETE /deploy/{id}`
-- A `failed` deployment does not count toward the limit
+> Each user can have a maximum of **2 active deployments** (`pending`, `running`, `success`, `deleting`). `failed` and `deleted` deployments do not count against this quota.
 
 ---
 
 ### GET /deploy/my-projects
 
-List all deployments belonging to the authenticated user. Returns deployments sorted by newest first.
+List all deployments created by the authenticated user, ordered from newest to oldest.
 
 | Property | Value |
 |----------|-------|
@@ -304,86 +237,36 @@ List all deployments belonging to the authenticated user. Returns deployments so
 | **Method** | `GET` |
 | **Auth Required** | ✅ Yes — `Authorization: Bearer <token>` |
 
-#### Request Headers
-
-| Header | Value | Required |
-|--------|-------|----------|
-| `Authorization` | `Bearer <access_token>` | ✅ |
-
-#### Success Response — `200 OK`
-
-Returns an **array** of deployment objects. Empty array `[]` if the user has no deployments.
-
-| Field | Type | Nullable | Description |
-|-------|------|----------|-------------|
-| `id` | `integer` | No | Deployment ID |
-| `image_name` | `string` | No | Docker image/container name |
-| `port` | `string` | No | Auto-assigned host port (10000–40000) |
-| `repo_url` | `string` | No | GitHub repository URL |
-| `status` | `string` | No | One of: `pending`, `running`, `success`, `failed`, `deleting`, `deleted` |
-| `error_message` | `string` | Yes | Error details (only when `status` is `"failed"`) |
-| `domain` | `string` | Yes | Live domain URL (only when `status` is `"success"`) |
+#### Response — `200 OK`
 
 ```json
 [
   {
     "id": 2,
     "image_name": "portfolio",
-    "port": "10006",
-    "repo_url": "https://github.com/john/portfolio.git",
+    "port": "10001",
+    "repo_url": "https://github.com/user/portfolio.git",
     "status": "success",
     "error_message": null,
     "domain": "portfolio.dev-saurabh-k.xyz"
   },
   {
     "id": 1,
-    "image_name": "myapp",
-    "port": "10005",
-    "repo_url": "https://github.com/john/myapp.git",
-    "status": "failed",
-    "error_message": "docker_compose: Error response from daemon: ...",
+    "image_name": "ecommerce",
+    "port": "10000",
+    "repo_url": "https://github.com/user/ecommerce.git",
+    "status": "running",
+    "error_message": null,
     "domain": null
   }
 ]
-```
-
-#### Error Responses
-
-| Status | Condition | Response Body |
-|--------|-----------|---------------|
-| `401 Unauthorized` | Missing or invalid token | `{"detail": "Invalid or expired token"}` |
-
-#### Frontend Example
-
-```javascript
-const token = localStorage.getItem("token");
-
-const response = await fetch("/deploy/my-projects", {
-  headers: { Authorization: `Bearer ${token}` },
-});
-
-if (response.ok) {
-  const projects = await response.json();
-
-  projects.forEach((project) => {
-    console.log(`${project.image_name} — ${project.status}`);
-    if (project.domain) {
-      console.log(`  Live at: https://${project.domain}`);
-    }
-    if (project.error_message) {
-      console.log(`  Error: ${project.error_message}`);
-    }
-  });
-} else if (response.status === 401) {
-  window.location.href = "/login";
-}
 ```
 
 ---
 
 ### POST /deploy/vite/react
 
-Start a new Vite + React deployment. The request returns immediately while the deployment runs in the background.
+Queue a new Vite + React project deployment.
 
 | Property | Value |
 |----------|-------|
@@ -392,54 +275,30 @@ Start a new Vite + React deployment. The request returns immediately while the d
 | **Auth Required** | ✅ Yes — `Authorization: Bearer <token>` |
 | **Content-Type** | `application/json` |
 
-#### Request Headers
-
-| Header | Value | Required |
-|--------|-------|----------|
-| `Authorization` | `Bearer <access_token>` | ✅ |
-| `Content-Type` | `application/json` | ✅ |
-
 #### Request Body
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `image_name` | `string` | ✅ | App name for the Docker container and subdomain: `<image_name>.dev-saurabh-k.xyz`. Must be 1–63 lowercase characters; start with a letter; and contain only lowercase letters, digits, or internal hyphens. |
-| `repo_url` | `string` | ✅ | GitHub repository URL to clone (e.g. `"https://github.com/user/repo.git"`) |
-| `environment_variables` | `object` | No | Environment variables to provide to the container. Keys must be valid shell-style variable names; values must be strings. Defaults to `{}`. |
+| `image_name` | `string` | ✅ | Unique app name (`1-63` chars, lowercase alphanumeric with internal hyphens, starts with letter). Becomes subdomain `<image_name>.dev-saurabh-k.xyz`. |
+| `repo_url` | `string` | ✅ | Public Git repository URL (e.g. `https://github.com/owner/repo`). |
+| `environment_variables` | `object` | ❌ | Key-value pairs of build/runtime environment variables (default: `{}`). |
 
 ```json
 {
-  "image_name": "myapp",
-  "repo_url": "https://github.com/johndoe/my-react-app.git",
+  "image_name": "my-store",
+  "repo_url": "https://github.com/Dev-Saurabh-K/e-commerce-ag",
   "environment_variables": {
-    "API_URL": "https://api.example.com",
-    "FEATURE_FLAG": "enabled"
+    "VITE_API_URL": "https://api.example.com",
+    "VITE_ENV": "production"
   }
 }
 ```
 
-The variables are written to `/opt/deployCode/<image_name>/.env`. The generated
-Compose configuration uses that file as its `env_file`, so they are available to
-the running container. They are not returned by deployment status endpoints.
-
-> [!IMPORTANT]
-> - `image_name` must be **unique across all active deployments** (including other users), because it becomes the Docker container name and nginx subdomain. Names are 1–63 characters, start with a lowercase letter, may include lowercase letters, digits, and internal hyphens, and cannot end with a hyphen.
-> - `repo_url` must contain a valid Vite + React project with a `package.json` at the root
-> - User must have **fewer than 2 active deployments** or the request will be rejected
-> - **Port is auto-assigned** from range 10000–40000 — do not send it in the request
-> - You may send up to **100** environment variables. Names must start with a letter or underscore and contain only letters, digits, and underscores. Values cannot contain line breaks.
-
 #### Success Response — `202 Accepted`
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `deployment_id` | `integer` | Unique ID to poll for status |
-| `status` | `string` | Always `"pending"` at this point |
-| `message` | `string` | Human-readable instructions |
 
 ```json
 {
-  "deployment_id": 1,
+  "deployment_id": 3,
   "status": "pending",
   "message": "Deployment started. Poll /deploy/{id}/status for updates."
 }
@@ -449,51 +308,17 @@ the running container. They are not returned by deployment status endpoints.
 
 | Status | Condition | Response Body |
 |--------|-----------|---------------|
-| `401 Unauthorized` | Missing or invalid token | `{"detail": "Invalid or expired token"}` |
-| `401 Unauthorized` | No `Authorization` header | `{"detail": "Not authenticated"}` |
-| `403 Forbidden` | User already has 2 active deployments | `{"detail": "Deployment limit reached. Maximum 2 active deployments per user."}` |
-| `409 Conflict` | An active deployment already uses `image_name` | `{"detail": "An active deployment already uses this app name."}` |
-| `422 Unprocessable Entity` | Missing/invalid fields | Validation error details |
-| `503 Service Unavailable` | All ports in range are in use | `{"detail": "No available ports. Please try again later."}` |
-
-#### Frontend Example
-
-```javascript
-const token = localStorage.getItem("token");
-
-const response = await fetch("/deploy/vite/react", {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${token}`,
-  },
-  body: JSON.stringify({
-    image_name: "myapp",
-    repo_url: "https://github.com/johndoe/my-react-app.git",
-    environment_variables: {
-      API_URL: "https://api.example.com",
-      FEATURE_FLAG: "enabled",
-    },
-  }),
-});
-
-if (response.status === 202) {
-  const data = await response.json();
-  // Start polling for status
-  pollDeploymentStatus(data.deployment_id);
-} else if (response.status === 403) {
-  const error = await response.json();
-  alert(error.detail); // "Deployment limit reached..."
-} else if (response.status === 401) {
-  window.location.href = "/login";
-}
-```
+| `401 Unauthorized` | Missing or expired JWT token | `{"detail": "Invalid or expired token"}` |
+| `403 Forbidden` | User quota exceeded (2 active apps) | `{"detail": "Deployment limit reached. Maximum 2 active deployments per user."}` |
+| `409 Conflict` | App name already taken by another active deployment | `{"detail": "An active deployment already uses this app name."}` |
+| `422 Unprocessable Entity` | Invalid app name format or invalid env var keys | Detailed validation error |
+| `503 Service Unavailable` | Port pool exhausted | `{"detail": "No available ports. Please try again later."}` |
 
 ---
 
 ### GET /deploy/{deployment_id}/status
 
-Check the current status of a deployment. Users can only view their own deployments.
+Poll status and details of a single deployment.
 
 | Property | Value |
 |----------|-------|
@@ -501,79 +326,17 @@ Check the current status of a deployment. Users can only view their own deployme
 | **Method** | `GET` |
 | **Auth Required** | ✅ Yes — `Authorization: Bearer <token>` |
 
-#### Path Parameters
+#### Response — `200 OK`
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `deployment_id` | `integer` | ✅ | The deployment ID returned from the deploy endpoint |
-
-#### Request Headers
-
-| Header | Value | Required |
-|--------|-------|----------|
-| `Authorization` | `Bearer <access_token>` | ✅ |
-
-#### Success Response — `200 OK`
-
-| Field | Type | Nullable | Description |
-|-------|------|----------|-------------|
-| `id` | `integer` | No | Deployment ID |
-| `image_name` | `string` | No | Docker image/container name |
-| `port` | `string` | No | Auto-assigned host port (10000–40000) |
-| `repo_url` | `string` | No | GitHub repository URL |
-| `status` | `string` | No | One of: `pending`, `running`, `success`, `failed`, `deleting`, `deleted` |
-| `error_message` | `string` | Yes | Error details (only when `status` is `"failed"`) |
-| `domain` | `string` | Yes | Live domain URL (only when `status` is `"success"`) |
-
-**Example — Pending / Running:**
 ```json
 {
-  "id": 1,
-  "image_name": "myapp",
-  "port": "10005",
-  "repo_url": "https://github.com/johndoe/my-react-app.git",
-  "status": "running",
-  "error_message": null,
-  "domain": null
-}
-```
-
-**Example — Success:**
-```json
-{
-  "id": 1,
-  "image_name": "myapp",
-  "port": "10005",
-  "repo_url": "https://github.com/johndoe/my-react-app.git",
+  "id": 3,
+  "image_name": "my-store",
+  "port": "10002",
+  "repo_url": "https://github.com/Dev-Saurabh-K/e-commerce-ag",
   "status": "success",
   "error_message": null,
-  "domain": "myapp.dev-saurabh-k.xyz"
-}
-```
-
-**Example — Failed:**
-```json
-{
-  "id": 1,
-  "image_name": "myapp",
-  "port": "10005",
-  "repo_url": "https://github.com/johndoe/my-react-app.git",
-  "status": "failed",
-  "error_message": "docker_compose: Error response from daemon: ...",
-  "domain": null
-}
-```
-
-**Example — Deleted:**
-```json
-{
-  "id": 1,
-  "image_name": "myapp",
-  "port": "10005",
-  "repo_url": "https://github.com/johndoe/my-react-app.git",
-  "status": "deleted",
-  "error_message": null,
-  "domain": null
+  "domain": "my-store.dev-saurabh-k.xyz"
 }
 ```
 
@@ -581,60 +344,14 @@ Check the current status of a deployment. Users can only view their own deployme
 
 | Status | Condition | Response Body |
 |--------|-----------|---------------|
-| `401 Unauthorized` | Missing or invalid token | `{"detail": "Invalid or expired token"}` |
-| `404 Not Found` | Deployment doesn't exist or belongs to another user | `{"detail": "Deployment not found"}` |
-
-#### Frontend Example — Polling
-
-```javascript
-async function pollDeploymentStatus(deploymentId) {
-  const token = localStorage.getItem("token");
-
-  const poll = setInterval(async () => {
-    const response = await fetch(`/deploy/${deploymentId}/status`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-
-    if (response.status === 401) {
-      clearInterval(poll);
-      window.location.href = "/login";
-      return;
-    }
-
-    const data = await response.json();
-
-    switch (data.status) {
-      case "pending":
-        console.log("⏳ Waiting to start...");
-        break;
-      case "running":
-        console.log("🚀 Deployment in progress...");
-        break;
-      case "success":
-        clearInterval(poll);
-        console.log(`✅ Live at: https://${data.domain}`);
-        break;
-      case "failed":
-        clearInterval(poll);
-        console.error(`❌ Failed: ${data.error_message}`);
-        break;
-      case "deleting":
-        console.log("🗑️ Deleting...");
-        break;
-      case "deleted":
-        clearInterval(poll);
-        console.log("🗑️ Deployment deleted");
-        break;
-    }
-  }, 3000); // Poll every 3 seconds
-}
-```
+| `401 Unauthorized` | Invalid/missing authentication token | `{"detail": "Invalid or expired token"}` |
+| `404 Not Found` | Deployment does not exist or belongs to another user | `{"detail": "Deployment not found"}` |
 
 ---
 
 ### DELETE /deploy/{deployment_id}
 
-Delete a deployment. Tears down the Docker container and images, removes nginx config, and deletes all files from the server. Runs asynchronously as a background task.
+Deletes a deployment, stops and tears down Docker containers, purges Docker images, deletes Nginx host configuration, and deletes directory contents.
 
 | Property | Value |
 |----------|-------|
@@ -642,38 +359,11 @@ Delete a deployment. Tears down the Docker container and images, removes nginx c
 | **Method** | `DELETE` |
 | **Auth Required** | ✅ Yes — `Authorization: Bearer <token>` |
 
-#### Path Parameters
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `deployment_id` | `integer` | ✅ | The deployment ID to delete |
-
-#### Request Headers
-
-| Header | Value | Required |
-|--------|-------|----------|
-| `Authorization` | `Bearer <access_token>` | ✅ |
-
-#### What Gets Deleted
-
-The `delete_deployment.sh` script runs these cleanup steps:
-1. Remove nginx symlink from `sites-enabled`
-2. Remove nginx config from `sites-available`
-3. Test and reload nginx
-4. Run `docker compose down --rmi all --remove-orphans` (stops containers, removes images)
-5. Delete the entire deployment directory (`/opt/deployCode/<image_name>`)
-
-#### Success Response — `200 OK`
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `deployment_id` | `integer` | The deployment being deleted |
-| `status` | `string` | `"deleting"` — deletion is in progress |
-| `message` | `string` | Human-readable instructions |
+#### Response — `200 OK`
 
 ```json
 {
-  "deployment_id": 1,
+  "deployment_id": 3,
   "status": "deleting",
   "message": "Deletion started. Poll /deploy/{id}/status for updates."
 }
@@ -683,46 +373,10 @@ The `delete_deployment.sh` script runs these cleanup steps:
 
 | Status | Condition | Response Body |
 |--------|-----------|---------------|
-| `401 Unauthorized` | Missing or invalid token | `{"detail": "Invalid or expired token"}` |
-| `404 Not Found` | Deployment doesn't exist or belongs to another user | `{"detail": "Deployment not found"}` |
-| `409 Conflict` | Deployment is already being deleted | `{"detail": "Deployment is already being deleted"}` |
-| `410 Gone` | Deployment has already been deleted | `{"detail": "Deployment has already been deleted"}` |
-
-#### Frontend Example
-
-```javascript
-async function deleteDeployment(deploymentId) {
-  const token = localStorage.getItem("token");
-
-  const response = await fetch(`/deploy/${deploymentId}`, {
-    method: "DELETE",
-    headers: { Authorization: `Bearer ${token}` },
-  });
-
-  if (response.ok) {
-    const data = await response.json();
-    console.log(data.message);
-    // Poll for deletion completion
-    pollDeploymentStatus(deploymentId);
-  } else {
-    const error = await response.json();
-    switch (response.status) {
-      case 401:
-        window.location.href = "/login";
-        break;
-      case 404:
-        alert("Deployment not found");
-        break;
-      case 409:
-        alert("Already being deleted — please wait");
-        break;
-      case 410:
-        alert("This deployment was already deleted");
-        break;
-    }
-  }
-}
-```
+| `401 Unauthorized` | Missing or expired token | `{"detail": "Invalid or expired token"}` |
+| `404 Not Found` | Deployment does not exist or belongs to another user | `{"detail": "Deployment not found"}` |
+| `409 Conflict` | Deployment is currently being deleted | `{"detail": "Deployment is already being deleted"}` |
+| `410 Gone` | Deployment was already deleted | `{"detail": "Deployment has already been deleted"}` |
 
 ---
 
@@ -730,15 +384,7 @@ async function deleteDeployment(deploymentId) {
 
 ### GET /
 
-Simple health check endpoint. No authentication required.
-
-| Property | Value |
-|----------|-------|
-| **URL** | `/` |
-| **Method** | `GET` |
-| **Auth Required** | ❌ No |
-
-#### Response — `200 OK`
+Public health check endpoint.
 
 ```json
 {
@@ -750,29 +396,29 @@ Simple health check endpoint. No authentication required.
 
 ## Data Models Reference
 
-### User
+### User Table (`users`)
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | `integer` | Auto-incrementing primary key |
-| `username` | `string(50)` | Unique username |
-| `hashed_password` | `string(255)` | Bcrypt-hashed password (never exposed via API) |
-| `created_at` | `datetime` | UTC timestamp of account creation |
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| `id` | `INTEGER` | Primary Key, Index | Unique user ID |
+| `username` | `VARCHAR(50)` | Unique, Not Null, Index | User handle |
+| `hashed_password` | `VARCHAR(255)` | Not Null | Bcrypt hashed password |
+| `created_at` | `DATETIME` | UTC Default | Account creation timestamp |
 
-### Deployment
+### Deployment Table (`deployments`)
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | `integer` | Auto-incrementing primary key |
-| `user_id` | `integer` | Foreign key → `users.id` |
-| `image_name` | `string(100)` | Docker image/container name |
-| `port` | `string(10)` | Auto-assigned host port (range 10000–40000) |
-| `repo_url` | `string(500)` | GitHub repository URL |
-| `status` | `string(20)` | `pending` \| `running` \| `success` \| `failed` \| `deleting` \| `deleted` |
-| `error_message` | `text` | Error details (null if no error) |
-| `domain` | `string(200)` | Generated domain (null until success) |
-| `created_at` | `datetime` | UTC timestamp of deployment creation |
-| `updated_at` | `datetime` | UTC timestamp of last status change |
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| `id` | `INTEGER` | Primary Key, Index | Deployment identifier |
+| `user_id` | `INTEGER` | Foreign Key (`users.id`) | Owner ID |
+| `image_name` | `VARCHAR(100)` | Not Null | App & container name |
+| `port` | `VARCHAR(10)` | Not Null | Auto-assigned port (`10000-40000`) |
+| `repo_url` | `VARCHAR(500)` | Not Null | Git repository URL |
+| `status` | `VARCHAR(20)` | Not Null | State enum (`pending`, `running`, `success`, `failed`, `deleting`, `deleted`) |
+| `error_message` | `TEXT` | Nullable | Error log message if failed |
+| `domain` | `VARCHAR(200)` | Nullable | Live domain URL when successful |
+| `created_at` | `DATETIME` | UTC Default | Timestamp created |
+| `updated_at` | `DATETIME` | UTC Default (auto-updated) | Last status transition timestamp |
 
 ---
 
@@ -781,81 +427,74 @@ Simple health check endpoint. No authentication required.
 ```mermaid
 stateDiagram-v2
     [*] --> pending: POST /deploy/vite/react
-    pending --> running: Background task picks up
-    running --> success: All 5 steps pass
-    running --> failed: Any step errors
+    pending --> running: Worker starts execution
+    running --> success: All 5 pipeline steps succeed
+    running --> failed: Pipeline error (logs saved)
     success --> deleting: DELETE /deploy/{id}
     failed --> deleting: DELETE /deploy/{id}
-    deleting --> deleted: Cleanup completes
-    deleting --> failed: Cleanup errors
+    deleting --> deleted: Cleanup finished
     deleted --> [*]
 ```
 
-| Status | Meaning | `error_message` | `domain` | Counts toward limit? |
-|--------|---------|------------------|----------|----------------------|
-| `pending` | Created, waiting for background task to start | `null` | `null` | ✅ Yes |
-| `running` | Background task is executing the pipeline | `null` | `null` | ✅ Yes |
-| `success` | All steps completed — app is live | `null` | `"<image_name>.dev-saurabh-k.xyz"` | ✅ Yes |
-| `failed` | A step in the pipeline errored out | Contains error details | `null` | ❌ No |
-| `deleting` | Delete script is running | `null` | `null` | ✅ Yes |
-| `deleted` | Fully cleaned up | `null` | `null` | ❌ No |
+| Status | Meaning | Counts Towards 2-App Limit? |
+|--------|---------|----------------------------|
+| `pending` | In queue, worker initializing | ✅ Yes |
+| `running` | Building Docker container / configuring Nginx | ✅ Yes |
+| `success` | Deployed and live at domain | ✅ Yes |
+| `failed` | Build or setup error encountered | ❌ No (slot freed) |
+| `deleting` | Background teardown script running | ✅ Yes |
+| `deleted` | Teardown complete | ❌ No (slot freed) |
 
 ---
 
 ## Error Reference
 
-All error responses use this format:
-
-```json
-{
-  "detail": "Human-readable error message"
-}
-```
-
 ### HTTP Status Codes
 
-| Code | Meaning | When |
-|------|---------|------|
-| `200 OK` | Request succeeded | Login, status check, list projects, delete |
+| Code | Meaning | Common Triggers |
+|------|---------|-----------------|
+| `200 OK` | Request succeeded | Login, status fetch, project list, delete started |
 | `201 Created` | Resource created | Registration |
-| `202 Accepted` | Accepted for background processing | Deploy started |
-| `400 Bad Request` | Client error | Duplicate username |
-| `401 Unauthorized` | Authentication failed | Missing/invalid/expired token, wrong credentials |
-| `403 Forbidden` | Limit exceeded | User has 2 active deployments |
-| `404 Not Found` | Resource not found | Deployment ID doesn't exist or belongs to another user |
-| `409 Conflict` | Conflicting active app name or action already in progress | An active deployment already uses the app name, or the deployment is already being deleted |
-| `410 Gone` | Resource already removed | Deployment was already deleted |
-| `422 Unprocessable Entity` | Validation failed | Missing required fields, wrong data types |
-| `503 Service Unavailable` | No ports available | All ports in range 10000–40000 are in use |
-
-### 422 Validation Error Format
-
-When request validation fails, the response body includes detailed field-level errors:
-
-```json
-{
-  "detail": [
-    {
-      "loc": ["body", "image_name"],
-      "msg": "Field required",
-      "type": "missing"
-    }
-  ]
-}
-```
+| `202 Accepted` | Background job queued | New deployment accepted |
+| `400 Bad Request` | Client validation error | Duplicate registration username |
+| `401 Unauthorized` | Authentication failure | Missing/invalid/expired token, wrong password |
+| `403 Forbidden` | Quota exceeded | User already has 2 active deployments |
+| `404 Not Found` | Not found | Deployment doesn't exist or is not owned by user |
+| `409 Conflict` | Resource conflict | App name in use by active deployment, or already deleting |
+| `410 Gone` | Gone | Deployment has already been deleted |
+| `422 Unprocessable Entity` | Schema validation error | Invalid app name regex, invalid env var format |
+| `503 Service Unavailable` | Service busy | Port range `10000-40000` fully saturated |
 
 ---
 
 ## Frontend Integration Guide
 
-### Complete Auth Module
+### Complete JavaScript Client Library
 
 ```javascript
-// ─── auth.js ─────────────────────────────────────────────
-
+// ─── api.js ──────────────────────────────────────────────────
 const API_BASE = "http://<server-ip>:8000";
 
-export async function register(username, password) {
+// Auth Helpers
+export function getToken() {
+  return localStorage.getItem("cploy_token");
+}
+
+export function setToken(token) {
+  localStorage.setItem("cploy_token", token);
+}
+
+export function logout() {
+  localStorage.removeItem("cploy_token");
+}
+
+export function authHeaders() {
+  const token = getToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+// ── Auth Endpoints ───────────────────────────────────────────
+export async function registerUser(username, password) {
   const res = await fetch(`${API_BASE}/auth/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -865,51 +504,32 @@ export async function register(username, password) {
   return res.json();
 }
 
-export async function login(username, password) {
+export async function loginUser(username, password) {
+  const params = new URLSearchParams();
+  params.append("username", username);
+  params.append("password", password);
+
   const res = await fetch(`${API_BASE}/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ username, password }),
+    body: params.toString(),
   });
   if (!res.ok) throw await res.json();
   const data = await res.json();
-  localStorage.setItem("token", data.access_token);
+  setToken(data.access_token);
   return data;
 }
 
-export function getToken() {
-  return localStorage.getItem("token");
-}
-
-export function logout() {
-  localStorage.removeItem("token");
-}
-
-export function authHeaders() {
-  return { Authorization: `Bearer ${getToken()}` };
-}
-```
-
-### Complete Deploy Module
-
-```javascript
-// ─── deploy.js ───────────────────────────────────────────
-
-import { authHeaders } from "./auth.js";
-
-const API_BASE = "http://<server-ip>:8000";
-
-/** List all projects for the current user */
-export async function getMyProjects() {
+// ── Deployment Endpoints ─────────────────────────────────────
+export async function fetchMyProjects() {
   const res = await fetch(`${API_BASE}/deploy/my-projects`, {
-    headers: authHeaders(),
+    headers: { ...authHeaders() },
   });
   if (!res.ok) throw await res.json();
-  return res.json(); // DeployStatusResponse[]
+  return res.json();
 }
 
-/** Start a new deployment (port is auto-assigned by the server) */
-export async function startDeploy(imageName, repoUrl, environmentVariables = {}) {
+export async function deployProject(appName, repoUrl, envVars = {}) {
   const res = await fetch(`${API_BASE}/deploy/vite/react`, {
     method: "POST",
     headers: {
@@ -917,56 +537,48 @@ export async function startDeploy(imageName, repoUrl, environmentVariables = {})
       ...authHeaders(),
     },
     body: JSON.stringify({
-      image_name: imageName,
+      image_name: appName,
       repo_url: repoUrl,
-      environment_variables: environmentVariables,
+      environment_variables: envVars,
     }),
   });
   if (!res.ok) throw await res.json();
-  return res.json(); // { deployment_id, status, message }
+  return res.json(); // { deployment_id, status: "pending", message }
 }
 
-/** Get status of a single deployment */
-export async function getDeployStatus(deploymentId) {
+export async function checkDeploymentStatus(deploymentId) {
   const res = await fetch(`${API_BASE}/deploy/${deploymentId}/status`, {
-    headers: authHeaders(),
+    headers: { ...authHeaders() },
   });
   if (!res.ok) throw await res.json();
   return res.json();
 }
 
-/** Delete a deployment */
-export async function deleteDeployment(deploymentId) {
+export async function deleteProject(deploymentId) {
   const res = await fetch(`${API_BASE}/deploy/${deploymentId}`, {
     method: "DELETE",
-    headers: authHeaders(),
+    headers: { ...authHeaders() },
   });
   if (!res.ok) throw await res.json();
-  return res.json(); // { deployment_id, status, message }
+  return res.json();
 }
 
-/**
- * Poll deployment status until it reaches a terminal state.
- * @param {number} deploymentId
- * @param {function} onUpdate - Called with status object on each poll
- * @param {number} intervalMs - Poll interval (default 3000ms)
- * @returns {Promise} Resolves with final status object
- */
-export function watchDeploy(deploymentId, onUpdate, intervalMs = 3000) {
-  const terminalStatuses = ["success", "failed", "deleted"];
+// ── Polling Utility ──────────────────────────────────────────
+export function pollStatus(deploymentId, onUpdate, intervalMs = 3000) {
+  const terminalStates = ["success", "failed", "deleted"];
 
   return new Promise((resolve, reject) => {
-    const poll = setInterval(async () => {
+    const timer = setInterval(async () => {
       try {
-        const status = await getDeployStatus(deploymentId);
-        onUpdate(status);
+        const data = await checkDeploymentStatus(deploymentId);
+        onUpdate(data);
 
-        if (terminalStatuses.includes(status.status)) {
-          clearInterval(poll);
-          resolve(status);
+        if (terminalStates.includes(data.status)) {
+          clearInterval(timer);
+          resolve(data);
         }
       } catch (err) {
-        clearInterval(poll);
+        clearInterval(timer);
         reject(err);
       }
     }, intervalMs);
@@ -974,73 +586,16 @@ export function watchDeploy(deploymentId, onUpdate, intervalMs = 3000) {
 }
 ```
 
-### Full Usage Example (React)
-
-```jsx
-import { login } from "./auth";
-import { getMyProjects, startDeploy, deleteDeployment, watchDeploy } from "./deploy";
-
-// ── List all projects ──
-async function showProjects() {
-  const projects = await getMyProjects();
-  console.log(`You have ${projects.length} deployment(s)`);
-  projects.forEach((p) => {
-    console.log(`  ${p.image_name} — ${p.status} (port: ${p.port}) ${p.domain ? `→ ${p.domain}` : ""}`);
-  });
-}
-
-// ── Deploy a new app (port is auto-assigned) ──
-async function handleDeploy() {
-  await login("john", "securePassword123");
-
-  try {
-    const { deployment_id } = await startDeploy(
-      "my-portfolio",
-      "https://github.com/john/portfolio.git",
-      { API_URL: "https://api.example.com" }
-    );
-
-    const result = await watchDeploy(deployment_id, (status) => {
-      console.log(`Status: ${status.status}`);
-      // Update your UI progress indicator here
-    });
-
-    if (result.status === "success") {
-      alert(`🎉 Live at https://${result.domain}`);
-    } else {
-      alert(`❌ Error: ${result.error_message}`);
-    }
-  } catch (err) {
-    if (err.detail?.includes("Deployment limit")) {
-      alert("You already have 2 active deployments. Delete one first.");
-    }
-  }
-}
-
-// ── Delete a deployment ──
-async function handleDelete(deploymentId) {
-  try {
-    await deleteDeployment(deploymentId);
-    const result = await watchDeploy(deploymentId, (status) => {
-      console.log(`Deleting: ${status.status}`);
-    });
-    console.log("Deployment deleted successfully");
-  } catch (err) {
-    alert(err.detail);
-  }
-}
-```
-
 ---
 
 ## Quick Reference — All Endpoints
 
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| `GET` | `/` | ❌ | Health check |
-| `POST` | `/auth/register` | ❌ | Create account |
-| `POST` | `/auth/login` | ❌ | Login → JWT token |
+| Method | Endpoint | Auth | Purpose |
+|--------|----------|------|---------|
+| `GET` | `/` | ❌ | Service health status |
+| `POST` | `/auth/register` | ❌ | Create new user account |
+| `POST` | `/auth/login` | ❌ | Authenticate & get JWT token |
 | `GET` | `/deploy/my-projects` | ✅ | List user's deployments |
-| `POST` | `/deploy/vite/react` | ✅ | Start deployment (max 2) |
-| `GET` | `/deploy/{id}/status` | ✅ | Poll deployment status |
-| `DELETE` | `/deploy/{id}` | ✅ | Delete deployment |
+| `POST` | `/deploy/vite/react` | ✅ | Deploy app (auto port, max 2) |
+| `GET` | `/deploy/{id}/status` | ✅ | Poll deployment build status |
+| `DELETE` | `/deploy/{id}` | ✅ | Teardown and delete deployment |
