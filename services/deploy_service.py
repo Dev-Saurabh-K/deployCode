@@ -7,7 +7,13 @@ from database import SessionLocal
 from models import Deployment
 
 
-def run_deployment(deployment_id: int, image_name: str, port: str, repo_url: str):
+def run_deployment(
+    deployment_id: int,
+    image_name: str,
+    port: str,
+    repo_url: str,
+    environment_variables: dict[str, str],
+):
     """
     Execute the full deployment pipeline in a background task.
     Uses its own DB session since BackgroundTasks run outside the request lifecycle.
@@ -44,6 +50,7 @@ def run_deployment(deployment_id: int, image_name: str, port: str, repo_url: str
                 "/home/saurabh/deployCode/scripts/create_compose.sh",
                 image_name,
                 port,
+                *[f"{key}={value}" for key, value in environment_variables.items()],
             ],
             capture_output=True,
             text=True,

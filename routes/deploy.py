@@ -1,5 +1,7 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
-from pydantic import BaseModel
+import re
+
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 from typing import cast
 
@@ -15,6 +17,21 @@ router = APIRouter(prefix="/deploy", tags=["deploy"])
 class DeployRequest(BaseModel):
     image_name: str
     repo_url: str
+    environment_variables: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("environment_variables")
+    @classmethod
+    def validate_environment_variables(cls, values: dict[str, str]) -> dict[str, str]:
+        if len(values) > 100:
+            raise ValueError("A maximum of 100 environment variables is allowed")
+
+        for key, value in values.items():
+            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+                raise ValueError(f"Invalid environment variable name: {key}")
+            if "\n" in value or "\r" in value or "\x00" in value:
+                raise ValueError("Environment variable values cannot contain newlines or null bytes")
+
+        return values
 
 
 class DeployResponse(BaseModel):
@@ -120,6 +137,7 @@ def deploy_vite_react(
         body.image_name,
         assigned_port,
         body.repo_url,
+        body.environment_variables,
     )
 
     return {
