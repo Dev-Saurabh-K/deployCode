@@ -9,12 +9,14 @@ fi
 
 DEPLOY_DIR="/opt/deployCode/$IMAGE_NAME"
 UNIVERSAL_DOCKERFILE="/home/saurabh/deployCode/templates/Dockerfile"
+NGINX_CONFIG="/home/saurabh/deployCode/templates/nginx.conf"
 
 #create deployment folder
 mkdir -p "$DEPLOY_DIR"
 
-#copy dockerfile
+# Copy the build assets required by the universal Dockerfile.
 cp "$UNIVERSAL_DOCKERFILE" "$DEPLOY_DIR/Dockerfile"
+cp "$NGINX_CONFIG" "$DEPLOY_DIR/nginx.conf"
 
 
 #input--> IMAGE_NAME (foldername)
