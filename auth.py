@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+import os
 
 import bcrypt
 from fastapi import Depends, HTTPException, status
@@ -6,7 +7,7 @@ from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from sqlalchemy.orm import Session
 
-from database import get_db
+from database import SessionLocal, get_db
 from models import User
 
 # ── Configuration ────────────────────────────────────────────────────────────
@@ -59,3 +60,43 @@ def get_current_user(
     if user is None:
         raise credentials_exception
     return user
+
+
+def get_current_admin(current_user: User = Depends(get_current_user)) -> User:
+    """Require an authenticated user with administrator privileges."""
+    if not current_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Administrator access is required",
+        )
+    return current_user
+
+
+def bootstrap_admin_from_environment() -> None:
+    """Create or promote the configured administrator during application startup."""
+    username = os.getenv("CPLOY_ADMIN_USERNAME")
+    password = os.getenv("CPLOY_ADMIN_PASSWORD")
+    if not username and not password:
+        return
+    if not username or not password:
+        raise RuntimeError(
+            "CPLOY_ADMIN_USERNAME and CPLOY_ADMIN_PASSWORD must be set together"
+        )
+
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.username == username).first()
+        if user:
+            user.is_admin = True
+            user.hashed_password = hash_password(password)
+        else:
+            db.add(
+                User(
+                    username=username,
+                    hashed_password=hash_password(password),
+                    is_admin=True,
+                )
+            )
+        db.commit()
+    finally:
+        db.close()

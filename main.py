@@ -1,12 +1,16 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from database import Base, engine
+from auth import bootstrap_admin_from_environment
+from database import Base, engine, upgrade_schema
+from routes.admin import router as admin_router
 from routes.auth import router as auth_router
 from routes.deploy import router as deploy_router
 
 # Create all database tables on startup
 Base.metadata.create_all(bind=engine)
+upgrade_schema()
+bootstrap_admin_from_environment()
 
 app = FastAPI(title="cploy", description="Self-hosted deployment platform")
 
@@ -32,6 +36,7 @@ app.add_middleware(
 # Register routers
 app.include_router(auth_router)
 app.include_router(deploy_router)
+app.include_router(admin_router)
 
 
 @app.get("/")
