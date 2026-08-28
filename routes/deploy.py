@@ -2,6 +2,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 import re
 
 from pydantic import BaseModel, Field, field_validator
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from typing import cast
 
@@ -15,9 +16,18 @@ router = APIRouter(prefix="/deploy", tags=["deploy"])
 
 # ── Request / Response Schemas ───────────────────────────────────────────────
 class DeployRequest(BaseModel):
-    image_name: str
+    image_name: str = Field(min_length=1, max_length=63)
     repo_url: str
     environment_variables: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("image_name")
+    @classmethod
+    def validate_image_name(cls, value: str) -> str:
+        if not re.fullmatch(r"[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?", value):
+            raise ValueError(
+                "App name must be 1-63 lowercase letters, digits, or internal hyphens, and start with a letter"
+            )
+        return value
 
     @field_validator("environment_variables")
     @classmethod
@@ -114,6 +124,22 @@ def deploy_vite_react(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Deployment limit reached. Maximum {MAX_DEPLOYMENTS_PER_USER} active deployments per user.",
+        )
+
+    # App names become Docker container names and subdomains, so they must be
+    # unique across every active deployment, not just this user's deployments.
+    existing_app = (
+        db.query(Deployment.id)
+        .filter(
+            func.lower(Deployment.image_name) == body.image_name,
+            Deployment.status.notin_(["deleted", "failed"]),
+        )
+        .first()
+    )
+    if existing_app:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An active deployment already uses this app name.",
         )
 
     # Auto-assign a unique port

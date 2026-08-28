@@ -403,7 +403,7 @@ Start a new Vite + React deployment. The request returns immediately while the d
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `image_name` | `string` | ✅ | Name for the Docker image and container. Also becomes the subdomain: `<image_name>.dev-saurabh-k.xyz` |
+| `image_name` | `string` | ✅ | App name for the Docker container and subdomain: `<image_name>.dev-saurabh-k.xyz`. Must be 1–63 lowercase characters; start with a letter; and contain only lowercase letters, digits, or internal hyphens. |
 | `repo_url` | `string` | ✅ | GitHub repository URL to clone (e.g. `"https://github.com/user/repo.git"`) |
 | `environment_variables` | `object` | No | Environment variables to provide to the container. Keys must be valid shell-style variable names; values must be strings. Defaults to `{}`. |
 
@@ -423,7 +423,7 @@ Compose configuration uses that file as its `env_file`, so they are available to
 the running container. They are not returned by deployment status endpoints.
 
 > [!IMPORTANT]
-> - `image_name` must be **unique** across all deployments (it's used as the Docker container name and nginx subdomain)
+> - `image_name` must be **unique across all active deployments** (including other users), because it becomes the Docker container name and nginx subdomain. Names are 1–63 characters, start with a lowercase letter, may include lowercase letters, digits, and internal hyphens, and cannot end with a hyphen.
 > - `repo_url` must contain a valid Vite + React project with a `package.json` at the root
 > - User must have **fewer than 2 active deployments** or the request will be rejected
 > - **Port is auto-assigned** from range 10000–40000 — do not send it in the request
@@ -452,6 +452,7 @@ the running container. They are not returned by deployment status endpoints.
 | `401 Unauthorized` | Missing or invalid token | `{"detail": "Invalid or expired token"}` |
 | `401 Unauthorized` | No `Authorization` header | `{"detail": "Not authenticated"}` |
 | `403 Forbidden` | User already has 2 active deployments | `{"detail": "Deployment limit reached. Maximum 2 active deployments per user."}` |
+| `409 Conflict` | An active deployment already uses `image_name` | `{"detail": "An active deployment already uses this app name."}` |
 | `422 Unprocessable Entity` | Missing/invalid fields | Validation error details |
 | `503 Service Unavailable` | All ports in range are in use | `{"detail": "No available ports. Please try again later."}` |
 
@@ -822,7 +823,7 @@ All error responses use this format:
 | `401 Unauthorized` | Authentication failed | Missing/invalid/expired token, wrong credentials |
 | `403 Forbidden` | Limit exceeded | User has 2 active deployments |
 | `404 Not Found` | Resource not found | Deployment ID doesn't exist or belongs to another user |
-| `409 Conflict` | Action already in progress | Deployment is already being deleted |
+| `409 Conflict` | Conflicting active app name or action already in progress | An active deployment already uses the app name, or the deployment is already being deleted |
 | `410 Gone` | Resource already removed | Deployment was already deleted |
 | `422 Unprocessable Entity` | Validation failed | Missing required fields, wrong data types |
 | `503 Service Unavailable` | No ports available | All ports in range 10000–40000 are in use |
