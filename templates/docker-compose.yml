@@ -1,0 +1,7 @@
+services:
+  nodeapp:
+    build: .
+    container_name: nodeapp1
+    ports:
+      - "10001:4000"   # host:container
+    restart: always
