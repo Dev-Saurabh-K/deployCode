@@ -5,4 +5,4 @@ WORKDIR /app
 COPY . .
 RUN npm ci
 
-CMD ["node", "app.js"]
+CMD ["sh", "-c", "${START_COMMAND:-node app.js}"]

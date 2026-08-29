@@ -1,0 +1,8 @@
+1.create_node_dir.sh   IMAGE_NAME
+create_node_compose.sh   IMAGE_NAME PORT USER_PORT [START_COMMAND] [KEY=VALUE ...]
+clone_git_repo.sh   IMAGE_NAME REPO_URL
+
+docker compose up
+
+START_COMMAND can be passed in the deployment request body or as a KEY=VALUE env entry.
+setup_nginx.sh   IMAGE_NAME PORT

@@ -11,7 +11,7 @@ from typing import cast
 from auth import get_current_user
 from database import get_db
 from models import Deployment, User
-from services.deploy_service import run_deployment, run_delete_deployment
+from services.deploy_service import run_deployment, run_delete_deployment, run_node_deployment
 
 router = APIRouter(prefix="/deploy", tags=["deploy"])
 
@@ -20,6 +20,7 @@ router = APIRouter(prefix="/deploy", tags=["deploy"])
 class DeployRequest(BaseModel):
     image_name: str = Field(min_length=1, max_length=63)
     repo_url: str
+    start_command: str | None = Field(default=None, min_length=1, max_length=500)
     environment_variables: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("image_name")
@@ -44,6 +45,15 @@ class DeployRequest(BaseModel):
                 raise ValueError("Environment variable values cannot contain newlines or null bytes")
 
         return values
+
+    @field_validator("start_command")
+    @classmethod
+    def validate_start_command(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        if "\n" in value or "\r" in value or "\x00" in value:
+            raise ValueError("Start command cannot contain newlines or null bytes")
+        return value.strip()
 
 
 class DeployResponse(BaseModel):
@@ -195,6 +205,84 @@ def deploy_vite_react(
         "deployment_id": deployment.id,
         "status": "pending",
         "message": "Deployment started. Poll /deploy/{id}/status for updates.",
+    }
+
+
+@router.post("/node/javascript", response_model=DeployResponse, status_code=status.HTTP_202_ACCEPTED)
+def deploy_node_javascript(
+    body: DeployRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Start a Node.js deployment in the background using the repository scripts
+    already prepared for Node applications.
+    """
+    active_count = (
+        db.query(Deployment)
+        .filter(
+            Deployment.user_id == current_user.id,
+            Deployment.status.notin_(["deleted", "failed"]),
+        )
+        .count()
+    )
+    if active_count >= MAX_DEPLOYMENTS_PER_USER:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Deployment limit reached. Maximum {MAX_DEPLOYMENTS_PER_USER} active deployments per user.",
+        )
+
+    if not _is_public_repo(body.repo_url):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Repository is private or does not exist. You must provide a public GitHub repository link.",
+        )
+
+    existing_app = (
+        db.query(Deployment.id)
+        .filter(
+            func.lower(Deployment.image_name) == body.image_name,
+            Deployment.status.notin_(["deleted", "failed"]),
+        )
+        .first()
+    )
+    if existing_app:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An active deployment already uses this app name.",
+        )
+
+    assigned_port = _next_available_port(db)
+
+    deployment = Deployment(
+        user_id=current_user.id,
+        image_name=body.image_name,
+        port=assigned_port,
+        repo_url=body.repo_url,
+        status="pending",
+    )
+    db.add(deployment)
+    db.commit()
+    db.refresh(deployment)
+
+    env_vars = dict(body.environment_variables)
+    if body.start_command:
+        env_vars["START_COMMAND"] = body.start_command
+
+    background_tasks.add_task(
+        run_node_deployment,
+        cast(int, deployment.id),
+        body.image_name,
+        assigned_port,
+        body.repo_url,
+        env_vars,
+    )
+
+    return {
+        "deployment_id": deployment.id,
+        "status": "pending",
+        "message": "Node.js deployment started. Poll /deploy/{id}/status for updates.",
     }
 
 

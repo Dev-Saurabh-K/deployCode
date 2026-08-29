@@ -18,6 +18,7 @@
   - [Deployment Limit](#deployment-limit)
   - [GET /deploy/my-projects](#get-deploymy-projects)
   - [POST /deploy/vite/react](#post-deployvitereact)
+  - [POST /deploy/node/javascript](#post-deploynodejavascript)
   - [GET /deploy/{deployment_id}/status](#get-deploydeployment_idstatus)
   - [DELETE /deploy/{deployment_id}](#delete-deploydeployment_id)
 - [Health Check](#health-check)
@@ -34,7 +35,7 @@
 cploy is a self-hosted deployment platform. The API lets you:
 
 1. **Register** an account and **log in** to receive a JWT
-2. **Deploy** a Vite + React app from a GitHub repo (runs asynchronously in the background)
+2. **Deploy** a Vite + React or Node.js app from a GitHub repo (runs asynchronously in the background)
 3. **Poll** the deployment status until it completes
 4. **List** all your deployed projects
 5. **Delete** a deployment (tears down Docker container, nginx config, and files)
@@ -61,6 +62,10 @@ sequenceDiagram
 
     FE->>API: POST /deploy/vite/react (with Bearer token)
     API->>BG: Start deployment task
+    API-->>FE: { deployment_id, status: "pending" }
+
+    FE->>API: POST /deploy/node/javascript (with Bearer token)
+    API->>BG: Start Node deployment task
     API-->>FE: { deployment_id, status: "pending" }
 
     loop Poll every 3-5 seconds
@@ -279,7 +284,135 @@ The assigned port is visible in the response when you poll `GET /deploy/{id}/sta
 > [!IMPORTANT]
 > Each user can have a maximum of **2 active deployments** at any time. Active means any deployment that is not in `deleted` or `failed` status (i.e. `pending`, `running`, `success`, or `deleting` all count).
 
-If the limit is reached, `POST /deploy/vite/react` returns:
+If the limit is reached, either deploy route returns:
+
+- `POST /deploy/vite/react`
+- `POST /deploy/node/javascript`
+
+```json
+// 403 Forbidden
+{
+  "detail": "Deployment limit reached. Maximum 2 active deployments per user."
+}
+```
+
+> The route-level behavior is the same for both deploy endpoints.
+
+**How to free up a slot:**
+- Delete an existing deployment via `DELETE /deploy/{id}`
+- A `failed` deployment does not count toward the limit
+
+---
+
+### POST /deploy/node/javascript
+
+Start a new Node.js deployment. The request returns immediately while the deployment runs in the background.
+
+| Property | Value |
+|----------|-------|
+| **URL** | `/deploy/node/javascript` |
+| **Method** | `POST` |
+| **Auth Required** | ✅ Yes — `Authorization: Bearer <token>` |
+| **Content-Type** | `application/json` |
+
+#### Request Headers
+
+| Header | Value | Required |
+|--------|-------|----------|
+| `Authorization` | `Bearer <access_token>` | ✅ |
+| `Content-Type` | `application/json` | ✅ |
+
+#### Request Body
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `image_name` | `string` | ✅ | App name for the Docker container and subdomain: `<image_name>.dev-saurabh-k.xyz`. Must be 1–63 lowercase characters; start with a letter; and contain only lowercase letters, digits, or internal hyphens. |
+| `repo_url` | `string` | ✅ | GitHub repository URL to clone (e.g. `"https://github.com/user/repo.git"`) |
+| `start_command` | `string` | No | Optional shell command to start the app, for example `npm start`, `node server.js`, or `pm2 start ecosystem.config.js` |
+| `environment_variables` | `object` | No | Environment variables to provide to the container. Keys must be valid shell-style variable names; values must be strings. Defaults to `{}`. |
+
+```json
+{
+  "image_name": "node-app",
+  "repo_url": "https://github.com/johndoe/node-api.git",
+  "start_command": "npm start",
+  "environment_variables": {
+    "PORT": "3000",
+    "NODE_ENV": "production"
+  }
+}
+```
+
+This route follows the same deployment lifecycle as Vite deployments, but it uses the project’s Node deployment scripts and Dockerfile before the app is started. The `start_command` is stored in the container environment as `START_COMMAND`, and the generated Compose configuration executes that value with `sh -c`. The Dockerfile `CMD` acts only as a fallback if no `START_COMMAND` is supplied.
+
+> [!IMPORTANT]
+> - `image_name` must be **unique across all active deployments** (including other users)
+> - `repo_url` must point to a valid public GitHub repository
+> - User must have **fewer than 2 active deployments**
+> - **Port is auto-assigned** from the same range 10000–40000
+> - You may send up to **100** environment variables
+
+#### Success Response — `202 Accepted`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `deployment_id` | `integer` | Unique ID to poll for status |
+| `status` | `string` | Always `"pending"` at this point |
+| `message` | `string` | Human-readable instructions |
+
+```json
+{
+  "deployment_id": 3,
+  "status": "pending",
+  "message": "Node.js deployment started. Poll /deploy/{id}/status for updates."
+}
+```
+
+#### Error Responses
+
+| Status | Condition | Response Body |
+|--------|-----------|---------------|
+| `400 Bad Request` | Repository is private or not found | `{"detail": "Repository is private or does not exist. You must provide a public GitHub repository link."}` |
+| `401 Unauthorized` | Missing or invalid token | `{"detail": "Invalid or expired token"}` |
+| `403 Forbidden` | User already has 2 active deployments | `{"detail": "Deployment limit reached. Maximum 2 active deployments per user."}` |
+| `409 Conflict` | An active deployment already uses `image_name` | `{"detail": "An active deployment already uses this app name."}` |
+| `422 Unprocessable Entity` | Missing/invalid fields | Validation error details |
+| `503 Service Unavailable` | All ports in range are in use | `{"detail": "No available ports. Please try again later."}` |
+
+#### Frontend Example
+
+```javascript
+const token = localStorage.getItem("token");
+
+const response = await fetch("/deploy/node/javascript", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${token}`,
+  },
+  body: JSON.stringify({
+    image_name: "node-app",
+    repo_url: "https://github.com/johndoe/node-api.git",
+    start_command: "npm start",
+    environment_variables: {
+      PORT: "3000",
+      NODE_ENV: "production",
+    },
+  }),
+});
+
+if (response.status === 202) {
+  const data = await response.json();
+  pollDeploymentStatus(data.deployment_id);
+} else if (response.status === 403) {
+  const error = await response.json();
+  alert(error.detail);
+}
+```
+
+---
+
+### GET /deploy/{deployment_id}/status
 
 ```json
 // 403 Forbidden
@@ -1042,6 +1175,7 @@ async function handleDelete(deploymentId) {
 | `POST` | `/auth/register` | ❌ | Create account |
 | `POST` | `/auth/login` | ❌ | Login → JWT token |
 | `GET` | `/deploy/my-projects` | ✅ | List user's deployments |
-| `POST` | `/deploy/vite/react` | ✅ | Start deployment (max 2) |
+| `POST` | `/deploy/vite/react` | ✅ | Start Vite deployment (max 2) |
+| `POST` | `/deploy/node/javascript` | ✅ | Start Node.js deployment (max 2) |
 | `GET` | `/deploy/{id}/status` | ✅ | Poll deployment status |
 | `DELETE` | `/deploy/{id}` | ✅ | Delete deployment |
